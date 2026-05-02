@@ -23,27 +23,7 @@ namespace AnalizaKoloruZdjęcia.ViewModels
         private BitmapImage? _selectedImageSource;
         private BitmapImage? _generatedImageSource;
         private string _colorAnalysisResult = string.Empty;
-        private double _hueThreshold = 30.0;
         private string _currentFilePath = string.Empty;
-
-        public double HueThreshold
-        {
-            get { return _hueThreshold; }
-            set
-            {
-                if (_hueThreshold != value)
-                {
-                    _hueThreshold = value;
-                    OnPropertyChanged(nameof(HueThreshold));
-                    
-                    // Reload image with new threshold if one is selected
-                    if (!string.IsNullOrEmpty(_currentFilePath))
-                    {
-                        LoadImage(_currentFilePath);
-                    }
-                }
-            }
-        }
 
         public string ColorAnalysisResult
         {
@@ -104,8 +84,6 @@ namespace AnalizaKoloruZdjęcia.ViewModels
             string extension = Path.GetExtension(filePath)?.ToLower() ?? string.Empty;
             return extension == ".jpg" || extension == ".jpeg" || extension == ".png" || extension == ".bmp" || extension == ".gif";
         }
-
-
 
         private void SelectImage()
         {
@@ -180,8 +158,8 @@ namespace AnalizaKoloruZdjęcia.ViewModels
 
                         object lockObj = new object();
 
-                        int width = bitmap.Width;
                         int height = bitmap.Height;
+                        int width = bitmap.Width;
 
                         int centerPosition = ((height / 2) * bmpData.Stride) + ((width / 2) * 4);
                         byte centerB = rgbValues[centerPosition];
@@ -191,8 +169,7 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                         var (centerHsl, _, _) = ColorHelper.RgbToAll(centerR, centerG, centerB);
                         double centerH = centerHsl.h;
 
-                        // Threshold for how far a hue can deviate from the center point's hue to be included
-                        double hueThreshold = _hueThreshold; 
+                        double hueThreshold = 30.0; // Default value, can be adjusted
 
                         int includedPixels = 0;
 
@@ -209,6 +186,10 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                                 byte b = rgbValues[position];
                                 byte g = rgbValues[position + 1];
                                 byte r = rgbValues[position + 2];
+                                byte a = rgbValues[position + 3];
+
+                                // Skip fully transparent pixels (non-standard shapes)
+                                if (a == 0) continue;
 
                                 var (hsl, hsv, hsi) = ColorHelper.RgbToAll(r, g, b);
 
@@ -247,10 +228,10 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                         bitmap.UnlockBits(bmpData);
                         
                         // Save the filtered image to a file
-                        string outputDir = Path.GetDirectoryName(filePath);
+                        string? outputDir = Path.GetDirectoryName(filePath);
                         string originalFileName = Path.GetFileNameWithoutExtension(filePath);
                         string outputFileName = $"{originalFileName}_filtered.png";
-                        string outputPath = Path.Combine(outputDir, outputFileName);
+                        string outputPath = Path.Combine(outputDir ?? string.Empty, outputFileName);
                         bitmap.Save(outputPath, ImageFormat.Png);
 
                         int validPixelCount = includedPixels > 0 ? includedPixels : 1; // Prevent division by zero
@@ -264,9 +245,9 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                         int imgHeight = 200;
                         using (Bitmap resultBmp = new Bitmap(imgWidth, imgHeight))
                         {
-                            System.Drawing.Color colorHsl = ColorHelper.HslToRgb(avgHslH, avgHslS, avgHslL);
-                            System.Drawing.Color colorHsv = ColorHelper.HsvToRgb(avgHsvH, avgHsvS, avgHsvV);
-                            System.Drawing.Color colorHsi = ColorHelper.HsiToRgb(avgHsiH, avgHsiS, avgHsiI);
+                            Color colorHsl = ColorHelper.HslToRgb(avgHslH, avgHslS, avgHslL);
+                            Color colorHsv = ColorHelper.HsvToRgb(avgHsvH, avgHsvS, avgHsvV);
+                            Color colorHsi = ColorHelper.HsiToRgb(avgHsiH, avgHsiS, avgHsiI);
 
                             using (Graphics graphics = Graphics.FromImage(resultBmp))
                             {
@@ -320,7 +301,7 @@ namespace AnalizaKoloruZdjęcia.ViewModels
             });
         }
 
-    public event PropertyChangedEventHandler? PropertyChanged;
+        public event PropertyChangedEventHandler? PropertyChanged;
 
         private void OnPropertyChanged(string propertyName)
         {

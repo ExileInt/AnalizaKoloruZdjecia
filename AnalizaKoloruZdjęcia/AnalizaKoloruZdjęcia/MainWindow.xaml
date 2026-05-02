@@ -17,11 +17,6 @@
 
         <StackPanel Grid.Column="0">
             <Button Content="Wybierz zdjęcie" Command="{Binding SelectImageCommand}" Margin="10"/>
-            <DockPanel Margin="10,0,10,10">
-                <TextBlock Text="Próg zgodności Hue (0-180): " DockPanel.Dock="Left" VerticalAlignment="Center"/>
-                <TextBlock Text="{Binding HueThreshold, StringFormat={}{0:F0}}" DockPanel.Dock="Right" VerticalAlignment="Center" Width="30" TextAlignment="Right"/>
-                <Slider Minimum="0" Maximum="180" Value="{Binding HueThreshold}" Margin="10,0" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center"/>
-            </DockPanel>
             <Image x:Name="SelectedImage" Source="{Binding SelectedImageSource}" Margin="10" Height="200"/>
             <Image x:Name="GeneratedImage" Source="{Binding GeneratedImageSource}" Margin="10" Height="200"/>
         </StackPanel>
