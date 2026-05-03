@@ -5,7 +5,7 @@ namespace AnalizaKoloruZdjęcia.Helpers
 {
     public static class ColorHelper
     {
-        public static ((double h, double s, double l) hsl, (double h, double s, double v) hsv, (double h, double s, double i) hsi) RgbToAll(byte r, byte g, byte b)
+        public static ((double h, double s, double l) hsl, (double h, double s, double v) hsv, (double h, double s, double i) hsi, (double l, double a, double b) lab) RgbToAll(byte r, byte g, byte b)
         {
             float fr = r / 255f;
             float fg = g / 255f;
@@ -41,7 +41,35 @@ namespace AnalizaKoloruZdjęcia.Helpers
             float i = (fr + fg + fb) / 3f;
             float s_hsi = i == 0 ? 0 : 1 - (min / i);
 
-            return ((hDegrees, s_hsl * 100, l * 100), (hDegrees, s_hsv * 100, v * 100), (hDegrees, s_hsi * 100, i * 100));
+            // CIELAB (simplified D65 illuminant, 2° observer)
+            double rLinear = PivotRgb(r / 255.0);
+            double gLinear = PivotRgb(g / 255.0);
+            double bLinear = PivotRgb(b / 255.0);
+
+            // Observer. = 2°, Illuminant = D65
+            double x = rLinear * 0.4124 + gLinear * 0.3576 + bLinear * 0.1805;
+            double y = rLinear * 0.2126 + gLinear * 0.7152 + bLinear * 0.0722;
+            double z = rLinear * 0.0193 + gLinear * 0.1192 + bLinear * 0.9505;
+
+            double xn = 0.95047;
+            double yn = 1.00000;
+            double zn = 1.08883;
+
+            double l_lab = 116.0 * PivotXyz(y / yn) - 16.0;
+            double a_lab = 500.0 * (PivotXyz(x / xn) - PivotXyz(y / yn));
+            double b_lab = 200.0 * (PivotXyz(y / yn) - PivotXyz(z / zn));
+
+            return ((hDegrees, s_hsl * 100, l * 100), (hDegrees, s_hsv * 100, v * 100), (hDegrees, s_hsi * 100, i * 100), (l_lab, a_lab, b_lab));
+        }
+
+        public static double PivotRgb(double n)
+        {
+            return (n > 0.04045 ? Math.Pow((n + 0.055) / 1.055, 2.4) : n / 12.92) * 100.0;
+        }
+
+        public static double PivotXyz(double n)
+        {
+            return n > 0.008856 ? Math.Pow(n, 1.0 / 3.0) : (7.787 * n + 16.0 / 116.0);
         }
 
         public static (double h, double s, double l) RgbToHsl(byte r, byte g, byte b)
@@ -120,9 +148,7 @@ namespace AnalizaKoloruZdjęcia.Helpers
             float fb = b / 255f;
 
             float i = (fr + fg + fb) / 3f;
-
-            float min = Math.Min(fr, Math.Min(fg, fb));
-            float s = i == 0 ? 0 : 1 - (min / i);
+            float s = i == 0 ? 0 : 1 - (Math.Min(fr, Math.Min(fg, fb)) / i);
 
             float h = 0f;
             if (s != 0)
@@ -134,7 +160,7 @@ namespace AnalizaKoloruZdjęcia.Helpers
                 h = fb > fg ? 2 * (float)Math.PI - theta : theta;
             }
 
-            return ((h * 180 / Math.PI), s * 100, i * 100);
+            return (h * 180 / Math.PI, s * 100, i * 100);
         }
 
         public static System.Drawing.Color HslToRgb(double h, double s, double l)
@@ -226,6 +252,50 @@ namespace AnalizaKoloruZdjęcia.Helpers
             b = Math.Clamp(b, 0, 1);
 
             return System.Drawing.Color.FromArgb((int)Math.Round(r * 255), (int)Math.Round(g * 255), (int)Math.Round(b * 255));
+        }
+
+        public static System.Drawing.Color LabToRgb(double l_lab, double a_lab, double b_lab)
+        {
+            double y = (l_lab + 16.0) / 116.0;
+            double x = a_lab / 500.0 + y;
+            double z = y - b_lab / 200.0;
+
+            double xn = 0.95047;
+            double yn = 1.00000;
+            double zn = 1.08883;
+
+            x = xn * PivotXyzReverse(x);
+            y = yn * PivotXyzReverse(y);
+            z = zn * PivotXyzReverse(z);
+
+            x /= 100.0;
+            y /= 100.0;
+            z /= 100.0;
+
+            double rLinear = x *  3.2406 + y * -1.5372 + z * -0.4986;
+            double gLinear = x * -0.9689 + y *  1.8758 + z *  0.0415;
+            double bLinear = x *  0.0557 + y * -0.2040 + z *  1.0570;
+
+            int r = (int)Math.Round(PivotRgbReverse(rLinear) * 255.0);
+            int g = (int)Math.Round(PivotRgbReverse(gLinear) * 255.0);
+            int b = (int)Math.Round(PivotRgbReverse(bLinear) * 255.0);
+
+            r = Math.Clamp(r, 0, 255);
+            g = Math.Clamp(g, 0, 255);
+            b = Math.Clamp(b, 0, 255);
+
+            return System.Drawing.Color.FromArgb(r, g, b);
+        }
+
+        private static double PivotXyzReverse(double n)
+        {
+            double n3 = Math.Pow(n, 3.0);
+            return n3 > 0.008856 ? n3 : (n - 16.0 / 116.0) / 7.787;
+        }
+
+        private static double PivotRgbReverse(double n)
+        {
+            return n > 0.0031308 ? 1.055 * Math.Pow(n, 1.0 / 2.4) - 0.055 : 12.92 * n;
         }
     }
 }

@@ -17,11 +17,15 @@
 
         <StackPanel Grid.Column="0">
             <Button Content="Wybierz zdjęcie" Command="{Binding SelectImageCommand}" Margin="10"/>
+            <Button Content="Wygeneruj zbiór testowy z plików" Command="{Binding GenerateDatasetCommand}" Margin="10,0,10,10"/>
+            <Button Content="Diagnostyka Leave-One-Quadrant-Out" Command="{Binding KFoldDiagnosticsCommand}" Margin="10,0,10,10"/>
             <Image x:Name="SelectedImage" Source="{Binding SelectedImageSource}" Margin="10" Height="200"/>
             <Image x:Name="GeneratedImage" Source="{Binding GeneratedImageSource}" Margin="10" Height="200"/>
         </StackPanel>
 
         <StackPanel Grid.Column="1">
+            <ProgressBar Minimum="0" Maximum="100" Value="{Binding AnalysisProgress}" Margin="10" Height="20"/>
+            <TextBlock Text="{Binding ProgressText}" Margin="10,0,10,10" HorizontalAlignment="Center"/>
             <TextBlock x:Name="ColorAnalysisResult" Text="{Binding ColorAnalysisResult}" Margin="10" FontSize="16" TextWrapping="Wrap"/>
         </StackPanel>
     </Grid>
