@@ -1,22 +1,15 @@
+using AnalizaKoloruZdjęcia.Helpers;
 using Microsoft.Win32;
-using System.Windows.Input;
-using System.Windows.Media.Imaging;
-using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
+using SemClassification;
 using System.ComponentModel;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.Globalization;
 using System.IO;
-using System.Threading.Tasks;
 using System.Text;
 using System.Windows;
-using System.Windows.Data;
-using System.Drawing;
-using AnalizaKoloruZdjęcia.Helpers;
-using Accord.MachineLearning;
-using Accord.Statistics;
-
-using System.Drawing.Imaging;
+using System.Windows.Input;
+using System.Windows.Media.Imaging;
 
 namespace AnalizaKoloruZdjęcia.ViewModels
 {
@@ -27,9 +20,31 @@ namespace AnalizaKoloruZdjęcia.ViewModels
         private BitmapImage? _generatedImageSource;
         private string _colorAnalysisResult = string.Empty;
         private string _currentFilePath = string.Empty;
-        private int _analyzedPixelCount = 0;
         private double _analysisProgress = 0;
         private string _progressText = string.Empty;
+        private readonly GmmClassifier _classifier;
+        private readonly string _datasetPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "trainData.csv");
+        private Visibility _selectImageVisibility = Visibility.Visible;
+        private Visibility _trainVisibility = Visibility.Visible;
+        private Visibility _diagnosticVisibility = Visibility.Collapsed;
+
+        public Visibility SelectImageVisibility
+        {
+            get { return _selectImageVisibility; }
+            set { _selectImageVisibility = value; OnPropertyChanged(nameof(SelectImageVisibility)); }
+        }
+
+        public Visibility TrainVisibility
+        {
+            get { return _trainVisibility; }
+            set { _trainVisibility = value; OnPropertyChanged(nameof(TrainVisibility)); }
+        }
+
+        public Visibility DiagnosticVisibility
+        {
+            get { return _diagnosticVisibility; }
+            set { _diagnosticVisibility = value; OnPropertyChanged(nameof(DiagnosticVisibility)); }
+        }
 
         public double AnalysisProgress
         {
@@ -79,15 +94,33 @@ namespace AnalizaKoloruZdjęcia.ViewModels
         #endregion
         public MainViewModel()
         {
+            _classifier = new GmmClassifier();
+
+            if (File.Exists(_datasetPath))
+            {
+                _classifier.TrainFromCsv(_datasetPath);
+                SelectImageVisibility = Visibility.Visible;
+                TrainVisibility = Visibility.Visible;
+            }
+
+            else
+            {
+                SelectImageVisibility = Visibility.Collapsed;
+                TrainVisibility = Visibility.Visible;
+            }
+
+            //if (!_classifier.IsReady)
+            //{
+            //    throw new Exception("GMM training failed.");
+            //}
+
             SelectImageCommand = new CommandHandler(() =>
             {
                 SelectImage();
             });
 
             DropImageCommand = new CommandHandler<string[]>(OnFilesDropped);
-
             GenerateDatasetCommand = new CommandHandler(GenerateDataset);
-
             KFoldDiagnosticsCommand = new CommandHandler(RunKFoldDiagnostics);
         }
 
@@ -118,7 +151,6 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                         sb.AppendLine("=== Wyniki Leave-One-Quadrant-Out (4 foldy) ===");
 
                         int processedFiles = 0;
-                        int totalCorrect = 0;
                         int totalFolds = 0;
 
                         double sumRatio = 0.0;
@@ -152,10 +184,6 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                                 // Zdefiniuj 4 kwadranty (0: TL, 1: TR, 2: BL, 3: BR)
                                 var quadrants = new (double L, double A, double B)[4];
                                 var quadCounts = new int[4];
-
-                                int gridCols = 2;
-                                int gridRows = 2;
-
                                 Parallel.For(0, 4, qIndex =>
                                 {
                                     int qX = qIndex % 2;
@@ -186,7 +214,7 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                                             localCount++;
                                         }
                                     }
-                                    if(localCount > 0)
+                                    if (localCount > 0)
                                     {
                                         quadrants[qIndex] = (sumL / localCount, sumA / localCount, sumB / localCount);
                                         quadCounts[qIndex] = localCount;
@@ -202,7 +230,7 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                                     totalFolds++;
 
                                     double trainL = 0, trainA = 0, trainB = 0;
-                                    for(int trainQuad = 0; trainQuad < 4; trainQuad++)
+                                    for (int trainQuad = 0; trainQuad < 4; trainQuad++)
                                     {
                                         if (trainQuad != testQuad)
                                         {
@@ -218,22 +246,22 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                                     double testA = quadrants[testQuad].A;
                                     double testB = quadrants[testQuad].B;
 
-                                    double distToOwn = Math.Sqrt( Math.Pow((testL - trainL)/100.0, 2) + Math.Pow((testA - trainA)/255.0, 2) + Math.Pow((testB - trainB)/255.0, 2) );
+                                    double distToOwn = Math.Sqrt(Math.Pow((testL - trainL) / 100.0, 2) + Math.Pow((testA - trainA) / 255.0, 2) + Math.Pow((testB - trainB) / 255.0, 2));
 
                                     // Symulacja nearest foreign centroid: Ponieważ ładujemy osobne pliki z dysku dla eksperymentu nie mamy bazy globalnej centroidów klas, dla celu diagnostyki własnej mierzymy więc tylko intra-class odchyły
                                     // lub ładujemy dataset_analysis zeby znalezc obce. Poniżej tylko logujemy dystans
-                                    sb.AppendLine($"  Fold {testQuad+1}: Dystans próbki testowej do trenowanego centroida własnej klasy = {distToOwn:F4}");
+                                    sb.AppendLine($"  Fold {testQuad + 1}: Dystans próbki testowej do trenowanego centroida własnej klasy = {distToOwn:F4}");
                                     sumRatio += distToOwn;
                                     ratioCount++;
                                 }
                             }
                             processedFiles++;
-                            Application.Current.Dispatcher.Invoke(() => { AnalysisProgress = (processedFiles / (double)files.Length) * 100; });
+                            Application.Current.Dispatcher.Invoke(() => { AnalysisProgress = processedFiles / (double)files.Length * 100; });
                         }
 
                         if (ratioCount > 0)
                         {
-                            sb.AppendLine($"\nŚredni dystans odchyłu (intra-class test quad distance): {(sumRatio/ratioCount):F4}");
+                            sb.AppendLine($"\nŚredni dystans odchyłu (intra-class test quad distance): {sumRatio / ratioCount:F4}");
                         }
 
                         File.WriteAllText(txtOutputPath, sb.ToString(), Encoding.UTF8);
@@ -258,7 +286,8 @@ namespace AnalizaKoloruZdjęcia.ViewModels
 
         private async void GenerateDataset()
         {
-            var openFileDialog = new OpenFileDialog
+
+            OpenFileDialog openFileDialog = new OpenFileDialog
             {
                 Filter = "Obrazy (*.png;*.jpg;*.jpeg;*.gif;*.bmp)|*.png;*.jpg;*.jpeg;*.gif;*.bmp",
                 Title = "Wybierz obrazy do zbioru testowego",
@@ -272,7 +301,7 @@ namespace AnalizaKoloruZdjęcia.ViewModels
 
                 ColorAnalysisResult = $"Trwa generowanie zbioru testowego dla {files.Length} plików...";
 
-                string txtOutputPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "dataset_analysis.csv");
+                string txtOutputPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, _datasetPath);
 
                 await Task.Run(() =>
                 {
@@ -359,15 +388,12 @@ namespace AnalizaKoloruZdjęcia.ViewModels
 
                                             if ((r == 0 && g == 0 && b == 0) || a == 0 || (r == 255 && g == 255 && b == 255)) continue;
 
-                                            var (_, _, _, lab) = ColorHelper.RgbToAll(r, g, b);
+                                            (double labL, double labA, double labB) = ColorHelper.RgbToLab(r, g, b);
 
-                                            //localHsvH += hsv.h; localHsvS += hsv.s; localHsvV += hsv.v;
-                                            localLabL += lab.l; localLabA += lab.a; localLabB += lab.b;
+                                            localLabL += labL; localLabA += labA; localLabB += labB;
                                             localIncluded++;
                                         }
                                     }
-
-                                    //cellSumHsvH[cellIndex] = localHsvH; cellSumHsvS[cellIndex] = localHsvS; cellSumHsvV[cellIndex] = localHsvV;
                                     cellSumLabL[cellIndex] = localLabL; cellSumLabA[cellIndex] = localLabA; cellSumLabB[cellIndex] = localLabB;
                                     cellIncluded[cellIndex] = localIncluded;
                                 });
@@ -377,9 +403,6 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                                     int cCount = cellIncluded[i];
                                     if (cCount > 0)
                                     {
-                                        //string hsvH = (cellSumHsvH[i] / cCount).ToString("F2", CultureInfo.InvariantCulture);
-                                        //string hsvS = (cellSumHsvS[i] / cCount).ToString("F2", CultureInfo.InvariantCulture);
-                                       // string hsvV = (cellSumHsvV[i] / cCount).ToString("F2", CultureInfo.InvariantCulture);
 
                                         string labL = (cellSumLabL[i] / cCount).ToString("F2", CultureInfo.InvariantCulture);
                                         string labA = (cellSumLabA[i] / cCount).ToString("F2", CultureInfo.InvariantCulture);
@@ -390,7 +413,7 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                                 }
                             }
                             processedFiles++;
-                            Application.Current.Dispatcher.Invoke(() => { AnalysisProgress = (processedFiles / (double)files.Length) * 100; });
+                            Application.Current.Dispatcher.Invoke(() => { AnalysisProgress = processedFiles / (double)files.Length * 100; });
                         }
 
                         File.WriteAllText(txtOutputPath, sb.ToString(), Encoding.UTF8);
@@ -410,6 +433,16 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                         });
                     }
                 });
+
+                _classifier.TrainFromCsv(_datasetPath);
+
+                if (!_classifier.IsReady)
+                {
+                    throw new Exception("GMM training failed.");
+                }
+                SelectImageVisibility = Visibility.Visible;
+                TrainVisibility = Visibility.Visible;
+
             }
         }
 
@@ -466,21 +499,21 @@ namespace AnalizaKoloruZdjęcia.ViewModels
             }
             catch (Exception ex)
             {
-                ColorAnalysisResult = $"Nie można wczytać pliku do podglądu:\n{ex.Message}";
+                ColorAnalysisResult = $"Nie można wczytać pliku do podglądu: \n{ex.Message}";
                 return;
             }
 
             ColorAnalysisResult = $"Wybrano plik:\n{filePath}\n\nAnaliza w toku...";
 
             AnalysisProgress = 0;
-            ProgressText = "Rozpoczynam podział powiązań...";
+            ProgressText = "Rozpoczynam podział obrazu...";
 
             await Task.Run(() =>
             {
                 try
                 {
-                    double avgLabL = 0, avgLabA = 0, avgLabB = 0;
-
+                    var patchFeatures = new List<double[]>();
+                    object patchLock = new object();
                     int pixelCount = 0;
                     string matchedClass = "Nieznana";
                     string classProbabilities = string.Empty;
@@ -492,17 +525,11 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                         {
                             pixelCount = bitmap.Width * bitmap.Height;
 
-                            BitmapData bmpData = bitmap.LockBits(
-                                new Rectangle(0, 0, bitmap.Width, bitmap.Height),
-                                ImageLockMode.ReadWrite,
-                                PixelFormat.Format32bppArgb);
+                            BitmapData bmpData = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
 
                             int bytes = Math.Abs(bmpData.Stride) * bitmap.Height;
                             byte[] rgbValues = new byte[bytes];
                             System.Runtime.InteropServices.Marshal.Copy(bmpData.Scan0, rgbValues, 0, bytes);
-
-                            //double sumHsvH = 0, sumHsvS = 0, sumHsvV = 0;
-                            double sumLabL = 0, sumLabA = 0, sumLabB = 0;
 
                             int height = bitmap.Height;
                             int width = bitmap.Width;
@@ -511,8 +538,8 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                             int gridRows = 10;
                             int numCells = gridCols * gridRows;
 
-                            //double[] cellSumHsvH = new double[numCells], cellSumHsvS = new double[numCells], cellSumHsvV = new double[numCells];
                             double[] cellSumLabL = new double[numCells], cellSumLabA = new double[numCells], cellSumLabB = new double[numCells];
+
                             int[] cellIncluded = new int[numCells];
 
                             Application.Current.Dispatcher.Invoke(() => { ProgressText = "Analiza partii siatki..."; });
@@ -528,7 +555,6 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                                 int startX = (int)(cellX * (width / (double)gridCols));
                                 int endX = cellX == gridCols - 1 ? width : (int)((cellX + 1) * (width / (double)gridCols));
 
-                                //double localHsvH = 0, localHsvS = 0, localHsvV = 0;
                                 double localLabL = 0, localLabA = 0, localLabB = 0;
                                 int localIncluded = 0;
 
@@ -543,119 +569,71 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                                         byte a = rgbValues[position + 3];
 
                                         // Skip completely black, white and transparent pixels
-                                        if ((r == 0 && g == 0 && b == 0 ) || a == 0 || (r == 255 && g == 255 && b == 255)) continue;
-
-                                        var (_, _, _, lab) = ColorHelper.RgbToAll(r, g, b);
-
-                                        //localHsvH += hsv.h; localHsvS += hsv.s; localHsvV += hsv.v;
-                                        localLabL += lab.l; localLabA += lab.a; localLabB += lab.b;
+                                        if ((r == 0 && g == 0 && b == 0) || a == 0 || (r == 255 && g == 255 && b == 255)) continue;
+                                        (double labL, double labA, double labB) = ColorHelper.RgbToLab(r, g, b);
+                                        localLabL += labL; localLabA += labA; localLabB += labB;
                                         localIncluded++;
                                     }
                                 }
 
-                                //cellSumHsvH[cellIndex] = localHsvH; cellSumHsvS[cellIndex] = localHsvS; cellSumHsvV[cellIndex] = localHsvV;
-                                cellSumLabL[cellIndex] = localLabL; cellSumLabA[cellIndex] = localLabA; cellSumLabB[cellIndex] = localLabB;
+                                if (localIncluded > 0)
+                                {
+                                    double avgL = localLabL / localIncluded;
+
+                                    double avgA = localLabA / localIncluded;
+
+                                    double avgB = localLabB / localIncluded;
+
+                                    double[] feature = { avgL / 100.0, (avgA + 128.0) / 255.0, (avgB + 128.0) / 255.0 };
+
+                                    lock (patchLock)
+                                    {
+                                        patchFeatures.Add(feature);
+                                    }
+                                }
                                 cellIncluded[cellIndex] = localIncluded;
 
                                 Application.Current.Dispatcher.Invoke(() => { AnalysisProgress += 100.0 / numCells; });
                             });
 
                             Application.Current.Dispatcher.Invoke(() => { ProgressText = "Sumuje i sprawdzam zestaw danych..."; });
-
-                            int includedPixels = 0;
-                            for (int i = 0; i < numCells; i++)
+                            Dictionary<string, int> votes = new Dictionary<string, int>();
+                            Dictionary<string, double> classScores = new Dictionary<string, double>();
+                            foreach (double[] patch in patchFeatures)
                             {
-                                //sumHsvH += cellSumHsvH[i]; sumHsvS += cellSumHsvS[i]; sumHsvV += cellSumHsvV[i];
-                                sumLabL += cellSumLabL[i]; sumLabA += cellSumLabA[i]; sumLabB += cellSumLabB[i];
-                                includedPixels += cellIncluded[i];
+                                (string className, double[] probabilities) result = _classifier.Predict(patch);
+                                double confidence = result.probabilities.Max();
+                                if (!votes.ContainsKey(result.className))
+                                {
+                                    votes[result.className] = 0;
+                                    classScores[result.className] = 0;
+                                }
+                                votes[result.className]++;
+                                classScores[result.className] += confidence;
+                            }
+                            matchedClass = votes.OrderByDescending(x => x.Value).ThenByDescending(x => classScores[x.Key]).First().Key;
+                            StringBuilder sb = new StringBuilder();
+                            int totalVotes = votes.Values.Sum();
+                            foreach (KeyValuePair<string, int> kv in votes.OrderByDescending(x => x.Value))
+                            {
+                                double p = kv.Value / (double)totalVotes * 100.0;
+                                if (kv.Value == 1)
+                                {
+                                    sb.AppendLine($"{kv.Key}: {p:F2}% ({kv.Value} patch)");
+                                }
+                                else
+                                {
+                                    sb.AppendLine($"{kv.Key}: {p:F2}% ({kv.Value} patchy)");
+                                }
                             }
 
-                            _analyzedPixelCount = includedPixels;
+                            classProbabilities = sb.ToString();
+                            double avgLabL = patchFeatures.Average(x => x[0]) * 100.0;
+                            double avgLabA = (patchFeatures.Average(x => x[1]) * 255.0) - 128.0;
+                            double avgLabB = (patchFeatures.Average(x => x[2]) * 255.0) - 128.0;
 
-                            // Copy modified bytes back to the bitmap and unlock
-                            System.Runtime.InteropServices.Marshal.Copy(rgbValues, 0, bmpData.Scan0, bytes);
-                            bitmap.UnlockBits(bmpData);
-                            int validPixelCount = includedPixels > 0 ? includedPixels : 1;
 
-                            avgLabL = sumLabL / validPixelCount; avgLabA = sumLabA / validPixelCount; avgLabB = sumLabB / validPixelCount;
-                            
-
-                            // Normalizacja przed zestawieniem (CIELAB odległości L:0..100, A:-128..127, B:-128..127) -> do [0, 1] i algorytmu w klasyfikatorze
-
-                            string datasetPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "dataset_analysis.csv");
-                            
                             // Przetwarzanie danych 
-                            /*
-                            if (File.Exists(datasetPath))
-                            {
-                                string[] lines = File.ReadAllLines(datasetPath);
-                                var classDistances = new Dictionary<string, List<double>>();
-
-                                // Skipped the first line (headers)
-                                for (int d = 1; d < lines.Length; d++)
-                                {
-                                    string[] parts = lines[d].Split(',');
-                                    if (parts.Length >= 4)
-                                    {
-                                        string currentClass = parts[1];
-
-                                        if (parts.Length >= 7 &&
-                                            double.TryParse(parts[4], NumberStyles.Any, CultureInfo.InvariantCulture, out double dLabL) &&
-                                            double.TryParse(parts[5], NumberStyles.Any, CultureInfo.InvariantCulture, out double dLabA) &&
-                                            double.TryParse(parts[6], NumberStyles.Any, CultureInfo.InvariantCulture, out double dLabB))
-                                        {
-                                            // Normalized Euclidean distance in CIELAB space
-                                            double nL = Math.Pow((dLabL - avgLabL) / 100.0, 2);
-                                            double nA = Math.Pow((dLabA - avgLabA) / 255.0, 2);
-                                            double nB = Math.Pow((dLabB - avgLabB) / 255.0, 2);
-
-                                            double distance = Math.Sqrt(nL + nA + nB);
-
-                                            if (!classDistances.ContainsKey(currentClass))
-                                            {
-                                                classDistances[currentClass] = new List<double>();
-                                            }
-                                            classDistances[currentClass].Add(distance);
-                                        }
-                                    }
-                                }
-
-                                if (classDistances.Count > 0)
-                                {
-                                    var classAverages = new Dictionary<string, double>();
-                                    double totalInverseDistance = 0;
-
-                                    foreach (var kvp in classDistances)
-                                    {
-                                        double sum = 0;
-                                        foreach (var val in kvp.Value)
-                                        {
-                                            sum += val;
-                                        }
-                                        double avgDist = sum / kvp.Value.Count;
-                                        classAverages[kvp.Key] = avgDist;
-                                        // Avoiding division by zero
-                                        totalInverseDistance += 1.0 / (avgDist + 0.0001);
-                                    }
-
-                                    double maxProb = -1;
-                                    StringBuilder probSb = new StringBuilder();
-
-                                    foreach (var kvp in classAverages)
-                                    {
-                                        double prob = (1.0 / (kvp.Value + 0.0001)) / totalInverseDistance * 100;
-                                        probSb.AppendLine($"{kvp.Key}: {prob:F2}%");
-
-                                        if (prob > maxProb)
-                                        {
-                                            maxProb = prob;
-                                            matchedClass = kvp.Key;
-                                        }
-                                    }
-                                    classProbabilities = probSb.ToString();
-                                }
-                            }
-                            */
 
                             Application.Current.Dispatcher.Invoke(() => { ProgressText = "Tworzenie grafiki i zapis na dysk..."; });
 
@@ -689,7 +667,6 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                                     });
                                 }
                             }
-
                             Application.Current.Dispatcher.Invoke(() => { ProgressText = "Analiza zakończona!"; AnalysisProgress = 100; });
                         }
 
@@ -697,13 +674,8 @@ namespace AnalizaKoloruZdjęcia.ViewModels
                         {
                             Application.Current.Dispatcher.Invoke(() =>
                             {
-                                ColorAnalysisResult = $"Rozpoznana nazwa (klasa): {matchedClass}\n\nPrawdopodobieństwa klas:\n{classProbabilities}\n" +
-                                                      //$"Średnie wartości HSV (kolumna lewa):\n" +
-                                                      //$"H: {avgHsvH:F2}°, S: {avgHsvS:F2}%, V: {avgHsvV:F2}%\n\n" +
-                                                      //$"Średnie CIELAB (kolumna prawa):\n" +
-                                                      $"L: {avgLabL:F2}, A: {avgLabA:F2}, B: {avgLabB:F2}\n\n" +
-                                                      $"Na podstawie {_analyzedPixelCount} pikseli.\n" +
-                                                      $"Co stanowi {(_analyzedPixelCount * 100.0 / pixelCount):F2}% wszystkich pikseli.";
+                                ColorAnalysisResult = $"Rozpoznana nazwa (klasa): {matchedClass}" +
+                                $"\n\nPrawdopodobieństwa klas:\n{classProbabilities}\n";
                             });
                         }
                     }
